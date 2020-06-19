@@ -1,0 +1,17 @@
+---
+apiVersion: networking.k8s.io/v1beta1
+kind: Ingress
+metadata:
+  name: seafile
+spec:
+  rules:
+  - http:
+      paths:
+      - backend:
+          serviceName: seafile
+          servicePort: seahub
+      - path: /seafhttp
+        pathType: Prefix
+        backend:
+          serviceName: seafile
+          servicePort: seafile

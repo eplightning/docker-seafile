@@ -1,0 +1,67 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mariadb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      mariadb: mariadb
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        mariadb: mariadb
+    spec:
+      containers:
+      - name: mariadb
+        args:
+          - --character-set-server=utf8mb4
+          - --collation-server=utf8mb4_unicode_ci
+        image: mariadb:10.2
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          value: root
+        - name: MYSQL_DATABASE
+          value: seafile
+        - name: MYSQL_USER
+          value: seafile
+        - name: MYSQL_PASSWORD
+          value: seafile
+        ports:
+        - name: mysql
+          containerPort: 3306
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/mysql
+      terminationGracePeriodSeconds: 60
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: mariadb-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mariadb
+spec:
+  type: ClusterIP
+  ports:
+    - protocol: TCP
+      port: 3306
+      targetPort: mysql
+  selector:
+    mariadb: mariadb
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mariadb-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi

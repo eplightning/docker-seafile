@@ -1,0 +1,20 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+configMapGenerator:
+- name: fluent-bit
+  files:
+  - fluent-bit/fluent-bit.conf
+  - fluent-bit/parsers.conf
+secretGenerator:
+- name: seafile-env
+  envs:
+    - env.txt
+  type: Opaque
+commonLabels:
+  app.kubernetes.io/name: seafile
+resources:
+- deployment.yaml
+- service.yaml
+- ingress.yaml
+- pvc.yaml
+

@@ -1,0 +1,76 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: seafile
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      seafile: seafile
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        seafile: seafile
+    spec:
+      containers:
+        - name: seafile
+          image: bslawianowski/seafile:7.1.4
+          args:
+            - run_only
+          envFrom:
+            - secretRef:
+                name: seafile-env
+          ports:
+            - name: seafile
+              containerPort: 8082
+            - name: seahub
+              containerPort: 8000
+          volumeMounts:
+            - name: logs
+              mountPath: /opt/haiwen/logs
+            - name: data
+              mountPath: /seafile
+          # TODO: readinessProbe/livenessProbe
+        - name: fluentbit
+          image: fluent/fluent-bit:1.4
+          args:
+            - "/fluent-bit/bin/fluent-bit"
+            - "-c"
+            - "/config/fluent-bit.conf"
+          volumeMounts:
+            - name: fluent-bit-config
+              mountPath: /config
+              readOnly: true
+            - name: logs
+              mountPath: /opt/haiwen/logs
+            - name: data
+              mountPath: /seafile
+      initContainers:
+        - name: seafile-init
+          image: bslawianowski/seafile:7.1.4
+          args:
+            - init_only
+          envFrom:
+            - secretRef:
+                name: seafile-env
+          volumeMounts:
+            - name: logs
+              mountPath: /opt/haiwen/logs
+            - name: data
+              mountPath: /seafile
+      securityContext:
+        runAsUser: 1000
+        fsGroup: 1000
+      terminationGracePeriodSeconds: 60
+      volumes:
+      - name: fluent-bit-config
+        configMap:
+          name: fluent-bit
+      - name: logs
+        emptyDir: {}
+      - name: data
+        persistentVolumeClaim:
+          claimName: seafile-data

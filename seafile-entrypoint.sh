@@ -1,66 +1,75 @@
 #!/bin/bash
 
-DATADIR=${DATADIR:-"/seafile"}
-BASEPATH=${BASEPATH:-"/opt/haiwen"}
+# TODO config autogeneration or seperate config volume using ConfigMaps
+# TODO allow to run as arbitrary user - currently uid 1000 is required
+# TODO cleanup env vars
+
+# MYSQL_SERVER 
+# MYSQL_PORT
+# SEAFILE_NAME
+# MYSQL_USER
+# MYSQL_USER_PASSWORD
+# MYSQL_USER_HOST
+# MYSQL_OPTIONAL_PARAMS x
+# SEAFILE_INITIALIZED x
+# DOCKERIZE_TIMEOUT x
+# SEAFILE_PUBLIC_URL x
+# SEAFILE_ADDRESS x
+# SEAFILE_PORT x
+
+
+DATADIR=/seafile
+BASEPATH=/opt/haiwen
 INSTALLPATH=${INSTALLPATH:-"${BASEPATH}/$(ls -1 ${BASEPATH} | grep -E '^seafile-server-[0-9.-]+')"}
 VERSION=$(echo $INSTALLPATH | grep -oE [0-9.]+)
-OLD_VERSION=$(cat $DATADIR/version || echo $VERSION)
 MAJOR_VERSION=$(echo $VERSION | cut -d. -f 1-2)
-OLD_MAJOR_VERSION=$(echo $OLD_VERSION | cut -d. -f 1-2)
-VIRTUAL_PORT=${VIRTUAL_PORT:-"8000"}
 
+if [ -f "$DATADIR/version" ]; then
+  OLD_VERSION=$(cat $DATADIR/version)
+else
+  OLD_VERSION=$VERSION
+fi
+
+OLD_MAJOR_VERSION=$(echo $OLD_VERSION | cut -d. -f 1-2)
+
+if [ ! -w "$DATADIR" ]; then
+  echo "$DATADIR not writable, unable to continue"
+  exit 1
+fi
 
 set -e
 set -u
 set -o pipefail
 
-trapped() {
-  control_seahub "stop"
-  control_seafile "stop"
-}
-
 autorun() {
-  # If there's an existing seafile config, link the dirs
-  move_and_link
-
-
-  # Update if neccessary
-  if [ $OLD_VERSION != $VERSION ]; then
-    full_update
-  fi
-  echo $VERSION > $DATADIR/version
-
-  # Needed to check the return code
-  set +e
-  collect_garbage
+  init_only
   control_seafile "start"
-  local RET=$?
-  set -e
-  # Try an initial setup on error
-  if [ ${RET} -eq 255 ]
-  then
-    choose_setup
-    control_seafile "start"
-  elif [ ${RET} -gt 0 ]
-  then
-    exit 1
-  fi
-
-  fix_gunicorn_config
-
-  if [ ${SEAFILE_FASTCGI:-} ]
-  then
-    control_seahub "start-fastcgi"
-  else
-    control_seahub "start"
-  fi
+  control_seahub "start"
   keep_in_foreground
 }
 
+init_only() {
+  if [ -e "$DATADIR/seafile-initialized" ] || [ "${SEAFILE_INITIALIZED:-}" == "true" ]; then
+    link_files
+
+    # Update if neccessary
+    if [ $OLD_VERSION != $VERSION ]; then
+      full_update
+    fi
+
+    collect_garbage
+  else
+    rm -rf ${DATADIR}/*
+    choose_setup
+    update_config
+    echo $VERSION > $DATADIR/version
+    touch "$DATADIR/seafile-initialized"
+  fi
+}
+
 run_only() {
-  local SH_DB_DIR="${DATADIR}/${SEAHUB_DB_DIR}"
   # Linking must always be done
-  link_files "${SH_DB_DIR}"
+  link_files
   control_seafile "start"
   control_seahub "start"
   keep_in_foreground
@@ -78,7 +87,6 @@ choose_setup() {
     set -u
     setup_sqlite
   fi
-
 }
 
 setup_mysql() {
@@ -88,13 +96,9 @@ setup_mysql() {
   DOCKERIZE_TIMEOUT=${DOCKERIZE_TIMEOUT:-"60s"}
   dockerize -timeout ${DOCKERIZE_TIMEOUT} -wait tcp://${MYSQL_SERVER}:${MYSQL_PORT:-3306}
 
-  set +u
-  OPTIONAL_PARMS="$([ -n "${MYSQL_ROOT_PASSWORD}" ] && printf '%s' "-r ${MYSQL_ROOT_PASSWORD}")"
-  set -u
-
-  gosu seafile bash -c ". /tmp/seafile.env; ${INSTALLPATH}/setup-seafile-mysql.sh auto \
+  "${INSTALLPATH}/setup-seafile-mysql.sh" auto \
     -n "${SEAFILE_NAME}" \
-    -i "${SEAFILE_ADDRESS}" \
+    -i "${SEAFILE_ADDRESS:-"127.0.0.1"}" \
     -p "${SEAFILE_PORT}" \
     -d "${SEAFILE_DATA_DIR}" \
     -o "${MYSQL_SERVER}" \
@@ -102,23 +106,23 @@ setup_mysql() {
     -u "${MYSQL_USER}" \
     -w "${MYSQL_USER_PASSWORD}" \
     -q "${MYSQL_USER_HOST:-"%"}" \
-    ${OPTIONAL_PARMS}"
+    ${MYSQL_OPTIONAL_PARAMS:-""}
 
-  setup_seahub
   move_and_link
+  setup_seahub
 }
 
 setup_sqlite() {
   echo "setup_sqlite"
   # Setup Seafile
-  gosu seafile bash -c ". /tmp/seafile.env; ${INSTALLPATH}/setup-seafile.sh auto \
+  "${INSTALLPATH}/setup-seafile.sh" auto \
     -n "${SEAFILE_NAME}" \
     -i "${SEAFILE_ADDRESS}" \
     -p "${SEAFILE_PORT}" \
-    -d "${SEAFILE_DATA_DIR}""
+    -d "${SEAFILE_DATA_DIR}"
 
-  setup_seahub
   move_and_link
+  setup_seahub
 }
 
 setup_seahub() {
@@ -130,34 +134,32 @@ setup_seahub() {
 
   control_seafile "start"
 
-  gosu seafile bash -c ". /tmp/seafile.env; python -t ${INSTALLPATH}/check_init_admin.py"
-  # gosu seafile bash -c ". /tmp/seafile.env; python -m trace -t ${INSTALLPATH}/check_init_admin.py | tee -a /seafile/check_init_admin.log"
+  bash -c ". /tmp/seafile.env; python3 -t ${INSTALLPATH}/check_init_admin.py"
+
+  control_seafile "stop"
 }
 
 move_and_link() {
-  # As seahub.db is normally in the root dir of seafile (/opt/haiwen)
-  # SEAHUB_DB_DIR needs to be defined if it should be moved elsewhere under /seafile
-  local SH_DB_DIR="${DATADIR}/${SEAHUB_DB_DIR}"
   # Stop Seafile/hub instances if running
   control_seahub "stop"
   control_seafile "stop"
 
-  move_files "${SH_DB_DIR}"
-  link_files "${SH_DB_DIR}"
-
-  if ! gosu seafile bash -c "test -w ${DATADIR}"; then
-    echo "Updating file permissions"
-    chown -R seafile:seafile ${DATADIR}/
-  fi
+  move_files
+  link_files
 }
 
-fix_gunicorn_config(){
-  echo "Fixing gunicorn config."
-  # Must bind 0.0.0.0 instead of 127.0.0.1
-  CONFIG_FILE=/seafile/conf/gunicorn.conf
-  OLD="bind = \"127.0.0.1:${VIRTUAL_PORT}\""
-  NEW="bind = \"0.0.0.0:${VIRTUAL_PORT}\""
-  sed -i "s/${OLD}/${NEW}/g" $CONFIG_FILE
+update_config() {
+  # gunicorn
+  OLD="bind = \"127.0.0.1:8000\""
+  NEW="bind = \"0.0.0.0:8000\""
+  sed -i "s/${OLD}/${NEW}/g" /seafile/conf/gunicorn.conf.py
+
+  # ccnet
+  sed -i "s#SERVICE_URL.*#SERVICE_URL = ${SEAFILE_PUBLIC_URL}#" /seafile/conf/ccnet.conf
+
+  # seahub
+  sed -i "/FILE_SERVER_ROOT.*/ d" /seafile/conf/seahub_settings.py
+  echo "FILE_SERVER_ROOT = '${SEAFILE_PUBLIC_URL}/seafhttp'" >> /seafile/conf/seahub_settings.py
 }
 
 move_files() {
@@ -172,27 +174,40 @@ move_files() {
 
   if [ -e "${BASEPATH}/seahub.db" -a ! -L "${BASEPATH}/seahub.db" ]
   then
-    mv ${BASEPATH}/seahub.db ${1}/
+    mv ${BASEPATH}/seahub.db ${DATADIR}/
   fi
 }
 
 link_files() {
-  for SEADIR in "ccnet" "conf" "seafile-data" "seahub-data"
+  for SEADIR in "ccnet" "conf" "seafile-data" "seahub-data" "seahub.db"
   do
     if [ -e "${DATADIR}/${SEADIR}" ]
     then
-      # ls for debugging reasons
-      ls -ld ${DATADIR}/${SEADIR}
-      ls -lA ${DATADIR}/${SEADIR}
+      rm -rf "${BASEPATH}/${SEADIR}"
       ln -sf ${DATADIR}/${SEADIR} ${BASEPATH}/${SEADIR}
     fi
   done
 
-  if [ -e "${SH_DB_DIR}/seahub.db" -a ! -L "${BASEPATH}/seahub.db" ]
-  then
-    ln -s ${1}/seahub.db ${BASEPATH}/seahub.db
-  fi
+  # avatars are stored in seahub/media for some reason so let's link that to seahub-data
+  rm -rf "${INSTALLPATH}/seahub/media/avatars"
+  ln -sf "${DATADIR}/seahub-data/avatars" "${INSTALLPATH}/seahub/media/avatars"
+}
 
+prepare_env() {
+  cat << _EOF_ > /tmp/seafile.env
+  export CCNET_CONF_DIR="${BASEPATH}/ccnet"
+  export SEAFILE_CONF_DIR="${SEAFILE_DATA_DIR}"
+  export SEAFILE_CENTRAL_CONF_DIR="${BASEPATH}/conf"
+  export SEAFILE_RPC_PIPE_PATH="${INSTALLPATH}/runtime"
+  export PYTHONPATH=${INSTALLPATH}/seafile/lib/python3.6/site-packages:${INSTALLPATH}/seafile/lib64/python3.6/site-packages:${INSTALLPATH}/seahub:${INSTALLPATH}/seahub/thirdpart:${PYTHONPATH:-}
+
+_EOF_
+}
+
+trapped() {
+  control_seahub "stop"
+  control_seafile "stop"
+  exit 0
 }
 
 keep_in_foreground() {
@@ -211,33 +226,19 @@ keep_in_foreground() {
   done
 }
 
-prepare_env() {
-  cat << _EOF_ > /tmp/seafile.env
-  export LANG='en_US.UTF-8'
-  export LC_ALL='en_US.UTF-8'
-  export CCNET_CONF_DIR="${BASEPATH}/ccnet"
-  export SEAFILE_CONF_DIR="${SEAFILE_DATA_DIR}"
-  export SEAFILE_CENTRAL_CONF_DIR="${BASEPATH}/conf"
-  export PYTHONPATH=${INSTALLPATH}/seafile/lib/python2.6/site-packages:${INSTALLPATH}/seafile/lib64/python2.6/site-packages:${INSTALLPATH}/seahub:${INSTALLPATH}/seahub/thirdpart:${INSTALLPATH}/seafile/lib/python2.7/site-packages:${INSTALLPATH}/seafile/lib64/python2.7/site-packages:${PYTHONPATH:-}
-
-_EOF_
-}
-
 control_seafile() {
-  gosu seafile bash -c ". /tmp/seafile.env; ${INSTALLPATH}/seafile.sh "$@""
-  local RET=$?
-  sleep 1
-  return ${RET}
+  "${INSTALLPATH}/seafile.sh" "$@"
 }
 
 control_seahub() {
-  gosu seafile bash -c ". /tmp/seafile.env; ${INSTALLPATH}/seahub.sh "$@""
-  local RET=$?
-  sleep 1
-  return ${RET}
+  "${INSTALLPATH}/seahub.sh" "$@"
 }
 
-full_update(){
+collect_garbage() {
+  "${INSTALLPATH}/seaf-gc.sh" "$@"
+}
+
+full_update() {
   EXECUTE=""
   echo ""
   echo "---------------------------------------"
@@ -257,46 +258,30 @@ full_update(){
   # When all the major upgrades are done, perform a minor upgrade
   if [ -z $EXECUTE ]; then
     update minor-upgrade.sh
-    echo $VERSION > $DATADIR/version
   fi
+
+  echo $VERSION > $DATADIR/version
 }
 
-update(){
-  gosu seafile bash -c ". /tmp/seafile.env; ${INSTALLPATH}/upgrade/$@"
+update() {
+  "${INSTALLPATH}/upgrade/$@"
   local RET=$?
   sleep 1
   return ${RET}
 }
-
-collect_garbage(){
-  gosu seafile bash -c ". /tmp/seafile.env; ${INSTALLPATH}/seaf-gc.sh $@"
-  local RET=$?
-  sleep 1
-  return ${RET}
-}
-
-maintenance(){
-  echo ""
-  echo "---------------------------------------"
-  echo "Running in maintenance mode"
-  echo "---------------------------------------"
-  echo ""
-  tail -f /dev/null
-}
-
 
 # Fill vars with defaults if empty
 if [ -z ${MODE+x} ]; then
   MODE=${1:-"run"}
 fi
 
-SEAFILE_DATA_DIR=${SEAFILE_DATA_DIR:-"${DATADIR}/seafile-data"}
+SEAFILE_DATA_DIR="${DATADIR}/seafile-data"
 SEAFILE_PORT=${SEAFILE_PORT:-8082}
-SEAHUB_DB_DIR=${SEAHUB_DB_DIR:-}
+SEAFILE_PUBLIC_URL=${SEAFILE_PUBLIC_URL:-"http://localhost:8000"}
 
 prepare_env
-
 trap trapped SIGINT SIGTERM
+
 case $MODE in
   "autorun" | "run")
     autorun
@@ -316,10 +301,14 @@ case $MODE in
   "run_only")
     run_only
   ;;
+  "init_only")
+    init_only
+  ;;
   "update")
     full_update
   ;;
-  "maintenance")
-    maintenance
+  "debug")
+    link_files
+    exec bash
   ;;
 esac
