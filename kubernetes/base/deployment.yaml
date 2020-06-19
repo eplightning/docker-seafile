@@ -15,7 +15,6 @@ spec:
       labels:
         seafile: seafile
     spec:
-      enableServiceLinks: false
       containers:
         - name: seafile
           image: bslawianowski/seafile:7.1.4
@@ -60,6 +59,7 @@ spec:
               mountPath: /etc/nginx/nginx.conf
               readOnly: true
               subPath: nginx.conf
+      enableServiceLinks: false
       initContainers:
         - name: seafile-init
           image: bslawianowski/seafile:7.1.4
