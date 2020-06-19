@@ -15,6 +15,7 @@ spec:
       labels:
         seafile: seafile
     spec:
+      enableServiceLinks: false
       containers:
         - name: seafile
           image: bslawianowski/seafile:7.1.4
