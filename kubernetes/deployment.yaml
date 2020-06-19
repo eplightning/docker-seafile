@@ -48,6 +48,17 @@ spec:
               mountPath: /opt/haiwen/logs
             - name: data
               mountPath: /seafile
+        - name: nginx
+          image: nginx:1.19
+          # TODO: readinessProbe/livenessProbe
+          ports:
+            - name: http
+              containerPort: 8080
+          volumeMounts:
+            - name: nginx-config
+              mountPath: /etc/nginx/nginx.conf
+              readOnly: true
+              subPath: nginx.conf
       initContainers:
         - name: seafile-init
           image: bslawianowski/seafile:7.1.4
@@ -69,6 +80,9 @@ spec:
       - name: fluent-bit-config
         configMap:
           name: fluent-bit
+      - name: nginx-config
+        configMap:
+          name: nginx
       - name: logs
         emptyDir: {}
       - name: data

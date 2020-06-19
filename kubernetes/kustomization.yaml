@@ -5,16 +5,19 @@ configMapGenerator:
   files:
   - fluent-bit/fluent-bit.conf
   - fluent-bit/parsers.conf
+- name: nginx
+  files:
+  - nginx/nginx.conf
 secretGenerator:
 - name: seafile-env
-  envs:
-    - env.txt
+  env: env.txt
   type: Opaque
 commonLabels:
   app.kubernetes.io/name: seafile
+namespace: seafile
 resources:
+- namespace.yaml
 - deployment.yaml
 - service.yaml
 - ingress.yaml
 - pvc.yaml
-

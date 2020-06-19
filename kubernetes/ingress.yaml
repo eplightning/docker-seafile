@@ -9,9 +9,4 @@ spec:
       paths:
       - backend:
           serviceName: seafile
-          servicePort: seahub
-      - path: /seafhttp
-        pathType: Prefix
-        backend:
-          serviceName: seafile
-          servicePort: seafile
+          servicePort: http
