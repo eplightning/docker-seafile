@@ -20,9 +20,6 @@ spec:
           image: bslawianowski/seafile:7.1.4
           args:
             - run_only
-          envFrom:
-            - secretRef:
-                name: seafile-env
           ports:
             - name: seafile
               containerPort: 8082
@@ -33,7 +30,18 @@ spec:
               mountPath: /opt/haiwen/logs
             - name: data
               mountPath: /seafile
-          # TODO: readinessProbe/livenessProbe
+          readinessProbe:
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            httpGet:
+              path: /api2/ping
+              port: seahub
+          livenessProbe:
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            httpGet:
+              path: /api2/ping
+              port: seahub
         - name: fluentbit
           image: fluent/fluent-bit:1.4
           args:

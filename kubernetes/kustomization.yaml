@@ -6,4 +6,5 @@ secretGenerator:
 - name: seafile-env
   env: env.txt
   type: Opaque
-
+patchesStrategicMerge:
+- config-from-env.yaml
