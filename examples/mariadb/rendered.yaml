@@ -111,6 +111,21 @@ metadata:
   namespace: seafile
 ---
 apiVersion: v1
+data:
+  MYSQL_OPTIONAL_PARAMS: LWUgMSAtcyBzZWFmaWxlIC1jIHNlYWZpbGUgLWIgc2VhZmlsZQ==
+  MYSQL_SERVER: bWFyaWFkYg==
+  MYSQL_USER: c2VhZmlsZQ==
+  MYSQL_USER_PASSWORD: c2VhZmlsZQ==
+  SEAFILE_ADMIN: ZXhhbXBsZUBleGFtcGxlLmNvbQ==
+  SEAFILE_ADMIN_PW: dGVzdA==
+  SEAFILE_NAME: c2VhZmlsZQ==
+  SEAFILE_PUBLIC_URL: aHR0cDovL2xvY2FsaG9zdA==
+kind: Secret
+metadata:
+  name: seafile-env-84mkm84728
+type: Opaque
+---
+apiVersion: v1
 kind: Service
 metadata:
   labels:
@@ -164,12 +179,24 @@ spec:
         - secretRef:
             name: seafile-env
         image: bslawianowski/seafile:7.1.4
+        livenessProbe:
+          httpGet:
+            path: /api2/ping
+            port: seahub
+          initialDelaySeconds: 60
+          periodSeconds: 20
         name: seafile
         ports:
         - containerPort: 8082
           name: seafile
         - containerPort: 8000
           name: seahub
+        readinessProbe:
+          httpGet:
+            path: /api2/ping
+            port: seahub
+          initialDelaySeconds: 30
+          periodSeconds: 20
         volumeMounts:
         - mountPath: /opt/haiwen/logs
           name: logs
